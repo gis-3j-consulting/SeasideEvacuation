@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seaside Tsunami Evacuation Route Checker</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  header {
+    background: #12161c; color: #fff; padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  header .sub { font-size: 11px; color: #8fa0b3; margin-top: 2px; }
+
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 8px 16px; background: #1a212b; border-bottom: 1px solid #2a333f;
+  }
+  .toggle { display: inline-flex; background: #232b38; border-radius: 8px; padding: 3px; }
+  .toggle button {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: #cdd3dd;
+    padding: 6px 14px; border: none; background: transparent; border-radius: 6px; opacity: 0.7;
+  }
+  .toggle button.active { background: #3b82f6; color: #fff; opacity: 1; }
+
+  .btn {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    padding: 8px 14px; border-radius: 8px; border: 1px solid #303a49;
+    background: #1c232e; color: #cdd3dd;
+  }
+  .btn:hover { background: #232b38; }
+  .btn.primary { background: #0f766e; border-color: #0f766e; color: #fff; }
+  .btn.primary:hover { background: #115e59; }
+  .btn.danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #map { flex: 1; min-height: 0; }
+
+  #result {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: 20px; z-index: 1000; width: min(440px, calc(100% - 32px));
+    border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+    display: none;
+  }
+  #result .verdict {
+    padding: 16px 18px; font-weight: 700; font-size: 16px; color: #fff;
+    display: flex; align-items: center; gap: 12px;
+  }
+  #result .verdict .big { font-size: 28px; line-height: 1; }
+  #result .verdict.fail { background: #dc2626; }
+  #result .verdict.pass { background: #16a34a; }
+  #result .body { background: #fff; padding: 12px 18px 16px; font-size: 13px; color: #1a1a1a; }
+  #result .body .item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 0; border-bottom: 1px solid #f0f2f5;
+  }
+  #result .body .item:last-child { border-bottom: none; }
+  #result .badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: #fee2e2; color: #991b1b; }
+  #result .close { float: right; cursor: pointer; opacity: 0.5; font-size: 18px; margin: -2px -4px 0 0; }
+
+  .hint {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(18,22,28,0.9); color: #fff;
+    padding: 7px 14px; border-radius: 999px; font-size: 12px; pointer-events: none;
+    white-space: nowrap;
+  }
+  .legend {
+    position: absolute; bottom: 20px; left: 12px; z-index: 900;
+    background: #fff; border-radius: 8px; padding: 8px 10px; font-size: 11px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); line-height: 1.6;
+  }
+  .legend .k { display: flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .disclaimer { font-size: 10px; color: #98a2b3; padding: 6px 16px; background: #12161c; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>Seaside Evacuation Route Checker</h1>
+      <div class="sub">Tsunami evacuation to Providence Seaside Hospital — demo data</div>
+    </div>
+  </header>
+  <div class="toolbar">
+    <span class="toggle">
+      <button id="modeTrace" class="active">Trace route</button>
+      <button id="modeLive">Live GPS</button>
+    </span>
+    <button id="liveBtn" class="btn primary" style="display:none;">Start tracking</button>
+    <button id="undoBtn" class="btn">Undo point</button>
+    <button id="clearBtn" class="btn">Clear</button>
+    <button id="checkBtn" class="btn danger" disabled>Check my route</button>
+  </div>
+  <div style="position:relative; flex:1; min-height:0;">
+    <div id="map"></div>
+    <div class="hint" id="hint">Tap the map to trace your route from the beach toward the hospital.</div>
+    <div class="legend">
+      <div class="k"><span class="sw" style="background:#dc2626;"></span> Bridge — will not survive</div>
+      <div class="k"><span class="sw" style="background:#16a34a;"></span> Hospital (safe zone)</div>
+      <div class="k"><span class="sw" style="background:#3b82f6;"></span> Your route</div>
+    </div>
+    <div id="result"></div>
+  </div>
+  <div class="disclaimer">Demo only. Bridge locations and seismic status are placeholder data for testing, not an official hazard assessment. Do not use for real emergency planning.</div>
+</div>
+
+<script>
+function boot() {
+// ---- Seaside geography ----
+const HOSPITAL = { lat: 45.98905, lng: -123.9118, name: "Providence Seaside Hospital" };
+const SEASIDE_CENTER = [45.9932, -123.9187];
+
+// Demo bridge points across the Necanicum River & Neawanna Creek.
+// Hand-placed approximate locations for a working test. All flagged "will not survive."
+const BRIDGES = [
+  { name: "Broadway Bridge (Necanicum R.)", lat: 45.9925, lng: -123.9165 },
+  { name: "Avenue A Bridge",                lat: 45.9948, lng: -123.9168 },
+  { name: "1st Avenue Bridge",              lat: 45.9958, lng: -123.9170 },
+  { name: "12th Avenue Bridge",             lat: 46.0010, lng: -123.9178 },
+  { name: "Avenue G Bridge",                lat: 45.9895, lng: -123.9160 },
+  { name: "Avenue U Bridge (Necanicum R.)", lat: 45.9832, lng: -123.9150 },
+  { name: "Broadway @ Neawanna Creek",      lat: 45.9922, lng: -123.9135 },
+  { name: "12th Ave @ Neawanna Creek",      lat: 46.0008, lng: -123.9145 },
+  { name: "Ave U @ Neawanna Creek",         lat: 45.9830, lng: -123.9122 },
+];
+const CROSS_RADIUS_M = 35; // buffer around each bridge point
+
+// ---- Map setup ----
+const map = L.map('map').setView(SEASIDE_CENTER, 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+// Hospital marker
+const hospIcon = L.divIcon({ className:'', html:'<div style="background:#16a34a;width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px #16a34a;"></div>', iconSize:[18,18], iconAnchor:[9,9] });
+L.marker([HOSPITAL.lat, HOSPITAL.lng], { icon: hospIcon }).addTo(map).bindPopup("<b>Providence Seaside Hospital</b><br>Evacuation finish / safe zone");
+
+// Bridge markers
+BRIDGES.forEach(b => {
+  const icon = L.divIcon({ className:'', html:'<div style="background:#dc2626;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #dc2626;"></div>', iconSize:[12,12], iconAnchor:[6,6] });
+  L.marker([b.lat, b.lng], { icon }).addTo(map).bindPopup("<b>"+b.name+"</b><br>Expected to fail in a Cascadia earthquake");
+});
+
+// ---- Route state ----
+let mode = 'trace';
+let routePts = [];        // array of [lat,lng]
+let routeLine = null;
+let watchId = null;
+
+function redraw() {
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (routePts.length >= 2) {
+    routeLine = L.polyline(routePts, { color:'#3b82f6', weight:5, opacity:0.9 }).addTo(map);
+  } else if (routePts.length === 1) {
+    routeLine = L.circleMarker(routePts[0], { radius:5, color:'#3b82f6', fillColor:'#3b82f6', fillOpacity:1 }).addTo(map);
+  }
+  document.getElementById('checkBtn').disabled = routePts.length < 2;
+}
+
+// Trace mode: click to add points
+map.on('click', e => {
+  if (mode !== 'trace') return;
+  routePts.push([e.latlng.lat, e.latlng.lng]);
+  hideResult();
+  redraw();
+});
+
+// ---- Mode switching ----
+const modeTrace = document.getElementById('modeTrace');
+const modeLive = document.getElementById('modeLive');
+const liveBtn = document.getElementById('liveBtn');
+const hint = document.getElementById('hint');
+
+function setMode(m) {
+  mode = m;
+  modeTrace.classList.toggle('active', m==='trace');
+  modeLive.classList.toggle('active', m==='live');
+  liveBtn.style.display = m==='live' ? '' : 'none';
+  document.getElementById('undoBtn').style.display = m==='trace' ? '' : 'none';
+  stopTracking();
+  hint.textContent = m==='trace'
+    ? "Tap the map to trace your route from the beach toward the hospital."
+    : "Press Start tracking, then move. Your GPS path is recorded live.";
+}
+modeTrace.onclick = () => setMode('trace');
+modeLive.onclick = () => setMode('live');
+
+// ---- Live GPS ----
+function startTracking() {
+  if (!navigator.geolocation) { alert("Geolocation not supported by this browser."); return; }
+  routePts = []; hideResult(); redraw();
+  liveBtn.textContent = "Stop tracking";
+  liveBtn.classList.remove('primary'); liveBtn.classList.add('danger');
+  hint.textContent = "Recording… move along your evacuation route.";
+  watchId = navigator.geolocation.watchPosition(
+    pos => {
+      const p = [pos.coords.latitude, pos.coords.longitude];
+      routePts.push(p);
+      map.panTo(p);
+      redraw();
+    },
+    err => { alert("Location error: " + err.message + "\n(Live GPS needs HTTPS + location permission.)"); stopTracking(); },
+    { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+  );
+}
+function stopTracking() {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  liveBtn.textContent = "Start tracking";
+  liveBtn.classList.add('primary'); liveBtn.classList.remove('danger');
+}
+liveBtn.onclick = () => { watchId === null ? startTracking() : stopTracking(); };
+
+// ---- Buttons ----
+document.getElementById('undoBtn').onclick = () => { routePts.pop(); hideResult(); redraw(); };
+document.getElementById('clearBtn').onclick = () => { stopTracking(); routePts = []; hideResult(); redraw(); };
+
+// ---- Check logic ----
+document.getElementById('checkBtn').onclick = () => {
+  const line = turf.lineString(routePts.map(p => [p[1], p[0]])); // turf wants [lng,lat]
+  const hit = [];
+  BRIDGES.forEach(b => {
+    const pt = turf.point([b.lng, b.lat]);
+    const dist = turf.pointToLineDistance(pt, line, { units: 'meters' });
+    if (dist <= CROSS_RADIUS_M) hit.push(b.name);
+  });
+
+  // Did the route actually get near the hospital?
+  const end = routePts[routePts.length - 1];
+  const distToHosp = turf.distance(turf.point([end[1], end[0]]), turf.point([HOSPITAL.lng, HOSPITAL.lat]), { units:'meters' });
+  const reachedHospital = distToHosp <= 150;
+
+  showResult(hit, reachedHospital);
+};
+
+function showResult(hitBridges, reached) {
+  const el = document.getElementById('result');
+  const failed = hitBridges.length > 0;
+  let html = '';
+  if (failed) {
+    html += '<div class="verdict fail"><span class="big">✕</span><div>Route failed — you crossed '
+         + hitBridges.length + ' bridge' + (hitBridges.length>1?'s':'') + ' expected to be destroyed.'
+         + '<div style="font-size:12px;font-weight:500;opacity:0.9;margin-top:2px;">In a real Cascadia quake this path would likely be impassable.</div></div>'
+         + '<span class="close" onclick="hideResult()">✕</span></div>';
+    html += '<div class="body">';
+    hitBridges.forEach(n => { html += '<div class="item"><span>'+n+'</span><span class="badge">will not survive</span></div>'; });
+    html += '</div>';
+  } else {
+    html += '<div class="verdict pass"><span class="big">✓</span><div>Route clear — no failed bridges crossed.'
+         + (reached ? '' : '<div style="font-size:12px;font-weight:500;opacity:0.9;margin-top:2px;">Note: your route didn’t end at the hospital.</div>')
+         + '</div><span class="close" onclick="hideResult()">✕</span></div>';
+  }
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
+function hideResult() { const el = document.getElementById('result'); el.style.display='none'; }
+window.hideResult = hideResult;
+
+redraw();
+} // end boot()
+
+// Wait for Leaflet + Turf to be available (CDN scripts may load after this one).
+(function waitForLibs(tries) {
+  if (typeof L !== 'undefined' && typeof turf !== 'undefined') { boot(); return; }
+  if (tries <= 0) {
+    document.getElementById('hint').textContent = 'Could not load map libraries — check your network connection.';
+    return;
+  }
+  setTimeout(() => waitForLibs(tries - 1), 150);
+})(40);
+</script>
+</body>
+</html>

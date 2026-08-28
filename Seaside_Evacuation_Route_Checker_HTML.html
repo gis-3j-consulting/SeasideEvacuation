@@ -9,8 +9,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  #app { display: flex; flex-direction: column; height: 100%; }
+  html, body { margin: 0; height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
 
   header {
     background: #12161c; color: #fff; padding: 10px 16px;
@@ -41,7 +41,7 @@
   .btn.danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  #map { flex: 1; min-height: 0; }
+  #map { flex: 1; min-height: 0; height: 100%; width: 100%; }
 
   #result {
     position: absolute; left: 50%; transform: translateX(-50%);
@@ -99,7 +99,7 @@
     <button id="clearBtn" class="btn">Clear</button>
     <button id="checkBtn" class="btn danger" disabled>Check my route</button>
   </div>
-  <div style="position:relative; flex:1; min-height:0;">
+  <div style="position:relative; flex:1 1 auto; min-height:0; display:flex; flex-direction:column;">
     <div id="map"></div>
     <div class="hint" id="hint">Tap the map to trace your route from the beach toward the hospital.</div>
     <div class="legend">
@@ -138,6 +138,12 @@ const map = L.map('map').setView(SEASIDE_CENTER, 14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, attribution: '&copy; OpenStreetMap'
 }).addTo(map);
+
+// Recalculate size once layout has settled (fixes blank map when container
+// height resolves after init, e.g. on GitHub Pages first paint).
+setTimeout(() => map.invalidateSize(), 200);
+window.addEventListener('resize', () => map.invalidateSize());
+window.addEventListener('load', () => map.invalidateSize());
 
 // Hospital marker
 const hospIcon = L.divIcon({ className:'', html:'<div style="background:#16a34a;width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px #16a34a;"></div>', iconSize:[18,18], iconAnchor:[9,9] });

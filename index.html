@@ -9,8 +9,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  #app { display: flex; flex-direction: column; height: 100vh; }
+  html, body { margin: 0; height: 100vh; height: 100dvh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 
   :root { --cranberry: #9c2743; --cranberry-dark: #7a1e34; }
 
@@ -84,6 +84,33 @@
     font-size: 20px; font-weight: 900; text-shadow: 0 0 3px rgba(0,0,0,0.5);
     display: flex; align-items: center; justify-content: center;
   }
+
+  /* larger tap targets on touch devices */
+  @media (pointer: coarse) {
+    .btn, .toggle button { padding: 10px 16px; }
+  }
+
+  /* phones / narrow viewports */
+  @media (max-width: 620px) {
+    header { flex-wrap: wrap; padding: 8px 12px; gap: 6px; }
+    header .title h1 { font-size: 14px; }
+    header .title .sub { display: none; }
+    header .logo img { height: 30px; }
+    .toolbar { padding: 7px 10px; gap: 6px; }
+    .toolbar .btn, .toggle button { font-size: 12px; }
+    .checkbar-full { flex-basis: 100%; }
+    #result { bottom: 12px; width: calc(100% - 20px); }
+    #result .verdict { font-size: 14px; padding: 13px 14px; }
+    #result .verdict .big { font-size: 22px; }
+    .legend { font-size: 10px; padding: 6px 8px; bottom: 12px; left: 8px; max-width: 47%; }
+    .hint { font-size: 11px; white-space: normal; }
+  }
+  /* very short landscape (phones on their side) */
+  @media (max-height: 450px) {
+    header .title .sub { display: none; }
+    .legend { bottom: 8px; }
+    #result { bottom: 8px; }
+  }
 </style>
 </head>
 <body>
@@ -110,9 +137,8 @@
     <div class="hint" id="hint">Tap the map to trace your route toward an evacuation area.</div>
     <div class="legend" id="legend">
       <div class="k"><span class="sw line" style="background:var(--cranberry);"></span> Your route (snapped to roads)</div>
-      <div class="k"><span class="sw" style="background:#16a34a;opacity:0.5;"></span> Evacuation area (safe)</div>
-      <div class="k"><span class="sw" style="background:#dc2626;"></span> Bridge — fails in earthquake</div>
-      <div class="k"><span class="sw" style="background:#16a34a;"></span> Bridge — survives</div>
+      <div class="k"><span class="sw" style="background:#16a34a;opacity:0.75;"></span> Evacuation area (safe)</div>
+      <div class="k"><span class="sw" style="background:#64748b;"></span> Bridge (status shown after check)</div>
       <div class="k"><span class="sw line" style="background:#555;border-top:2px dotted #555;background:none;"></span> City limits</div>
     </div>
     <div id="result"></div>
@@ -137,7 +163,7 @@ function boot() {
 
   // Aerial imagery + labels overlay
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Imagery &copy; Esri'
+    maxZoom: 19, attribution: 'Imagery &copy; Esri', opacity: 0.8
   }).addTo(map);
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19, attribution: '', pane: 'overlayPane'
@@ -156,7 +182,7 @@ function boot() {
   L.geoJSON(DATA.city, { style: { color:'#ffffff', weight:2, dashArray:'4 5', fill:false, opacity:0.9 } }).addTo(map);
 
   // Roads — subtle, for snapping reference
-  L.geoJSON(DATA.roads, { style: { color:'#ffd27f', weight:1, opacity:0.35 } }).addTo(map);
+  L.geoJSON(DATA.roads, { style: { color:'#ffd27f', weight:1, opacity:0.35 }, interactive:false }).addTo(map);
 
   // Build a single MultiLineString of all roads for snapping (turf)
   const roadLines = [];
@@ -166,26 +192,92 @@ function boot() {
   });
   const roadsMulti = turf.multiLineString(roadLines);
 
+  // ---------- routing graph (snap route ALONG roads) ----------
+  // Nodes = road vertices (keyed by rounded lng,lat). Edges = segments, weighted by length.
+  const NODES = [];          // {lng,lat}
+  const nodeIndex = new Map(); // key -> node id
+  const ADJ = [];            // id -> [{to, w}]
+  function nkey(lng, lat) { return lng.toFixed(5) + ',' + lat.toFixed(5); }
+  function nodeId(lng, lat) {
+    const k = nkey(lng, lat);
+    let id = nodeIndex.get(k);
+    if (id === undefined) { id = NODES.length; NODES.push({lng, lat}); ADJ.push([]); nodeIndex.set(k, id); }
+    return id;
+  }
+  function segLen(a, b) { return turf.distance([a.lng,a.lat],[b.lng,b.lat],{units:'meters'}); }
+  roadLines.forEach(line => {
+    for (let i = 0; i < line.length - 1; i++) {
+      const a = nodeId(line[i][0], line[i][1]);
+      const b = nodeId(line[i+1][0], line[i+1][1]);
+      if (a === b) continue;
+      const w = segLen(NODES[a], NODES[b]);
+      ADJ[a].push({to:b, w}); ADJ[b].push({to:a, w});
+    }
+  });
+
+  // snap an arbitrary latlng to the nearest node on the road graph
+  function nearestNode(lat, lng) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < NODES.length; i++) {
+      const dx = NODES[i].lng - lng, dy = NODES[i].lat - lat;
+      const d = dx*dx + dy*dy; // squared degrees, fine for nearest
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  // Dijkstra shortest path between two node ids; returns array of node ids or null
+  function shortestPath(src, dst) {
+    if (src === dst) return [src];
+    const dist = new Float64Array(NODES.length).fill(Infinity);
+    const prev = new Int32Array(NODES.length).fill(-1);
+    const visited = new Uint8Array(NODES.length);
+    dist[src] = 0;
+    // simple binary heap
+    const heap = [[0, src]];
+    const push = (d,n) => { heap.push([d,n]); let i=heap.length-1;
+      while(i>0){const p=(i-1)>>1; if(heap[p][0]<=heap[i][0])break; [heap[p],heap[i]]=[heap[i],heap[p]]; i=p;} };
+    const pop = () => { const top=heap[0], last=heap.pop();
+      if(heap.length){heap[0]=last; let i=0; for(;;){let l=2*i+1,r=2*i+2,s=i;
+        if(l<heap.length&&heap[l][0]<heap[s][0])s=l; if(r<heap.length&&heap[r][0]<heap[s][0])s=r;
+        if(s===i)break; [heap[s],heap[i]]=[heap[i],heap[s]]; i=s;}} return top; };
+    while (heap.length) {
+      const [d, u] = pop();
+      if (visited[u]) continue; visited[u] = 1;
+      if (u === dst) break;
+      for (const {to, w} of ADJ[u]) {
+        const nd = d + w;
+        if (nd < dist[to]) { dist[to] = nd; prev[to] = u; push(nd, to); }
+      }
+    }
+    if (prev[dst] === -1 && src !== dst) return null;
+    const path = []; let cur = dst;
+    while (cur !== -1) { path.push(cur); cur = prev[cur]; }
+    return path.reverse();
+  }
+
   // Evac points — large translucent green circles (areas)
   const evacPts = [];
   DATA.evac.features.forEach(f => {
     const [lng, lat] = f.geometry.coordinates;
     evacPts.push([lng, lat]);
+    // interactive:false so clicks pass through to the map (place route points on top of evac areas)
     L.circle([lat, lng], {
-      radius: 70, color:'#16a34a', weight:2, fillColor:'#16a34a', fillOpacity:0.25
-    }).addTo(map).bindPopup('Evacuation area — reach here for safety');
+      radius: 70, color:'#16a34a', weight:2, fillColor:'#16a34a', fillOpacity:0.55, interactive:false
+    }).addTo(map);
   });
 
-  // Bridge markers (plain state; verdict markers drawn on check)
+  // Bridge markers — NEUTRAL until the user checks (don't reveal pass/fail up front)
   const bridgeInfo = [];
+  let bridgeMarkers = [];
   DATA.bridges.features.forEach(f => {
     const [lng, lat] = f.geometry.coordinates;
     const survives = (f.properties.SurviveEarthquake === 'Yes');
     bridgeInfo.push({ lng, lat, survives });
-    const color = survives ? '#16a34a' : '#dc2626';
-    L.circleMarker([lat, lng], {
-      radius: 6, color:'#fff', weight:2, fillColor:color, fillOpacity:1
-    }).addTo(map).bindPopup(survives ? 'Bridge — expected to survive' : 'Bridge — expected to fail');
+    const m = L.circleMarker([lat, lng], {
+      radius: 6, color:'#fff', weight:2, fillColor:'#64748b', fillOpacity:1, interactive:false
+    }).addTo(map);
+    bridgeMarkers.push(m);
   });
   let verdictLayer = L.layerGroup().addTo(map);
 
@@ -196,30 +288,43 @@ function boot() {
   let snapLine = null;
   let watchId = null;
 
-  function snapPoint(latlng) {
-    const pt = turf.point([latlng[1], latlng[0]]);
-    const snapped = turf.nearestPointOnLine(roadsMulti, pt, { units:'meters' });
-    if (snapped.properties.dist <= SNAP_MAX_M) {
-      const [lng, lat] = snapped.geometry.coordinates;
-      return [lat, lng];
+  // Build the along-road route: snap each clicked point to nearest graph node,
+  // then Dijkstra between consecutive nodes and stitch the paths together.
+  // Returns array of [lat,lng] following the roads.
+  function buildSnappedRoute() {
+    if (rawPts.length === 0) return [];
+    const nodeIds = rawPts.map(p => nearestNode(p[0], p[1]));
+    if (rawPts.length === 1) { const n = NODES[nodeIds[0]]; return [[n.lat, n.lng]]; }
+    const coords = [];
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      const path = shortestPath(nodeIds[i], nodeIds[i+1]);
+      if (!path) {
+        // no road path found (disconnected) — fall back to straight hop so route still continues
+        const a = NODES[nodeIds[i]], b = NODES[nodeIds[i+1]];
+        if (coords.length === 0) coords.push([a.lat, a.lng]);
+        coords.push([b.lat, b.lng]);
+        continue;
+      }
+      path.forEach((id, idx) => {
+        if (i > 0 && idx === 0) return; // avoid duplicating shared node
+        const n = NODES[id]; coords.push([n.lat, n.lng]);
+      });
     }
-    return latlng; // too far from any road — keep as-is
+    return coords;
   }
 
-  function snappedRoute() {
-    return rawPts.map(snapPoint);
-  }
-
+  let snappedCache = [];
   function redraw() {
     if (snapLine) { map.removeLayer(snapLine); snapLine = null; }
-    const snap = snappedRoute();
-    if (snap.length >= 2) {
-      snapLine = L.polyline(snap, { color:'#9c2743', weight:5, opacity:0.95 }).addTo(map);
-    } else if (snap.length === 1) {
-      snapLine = L.circleMarker(snap[0], { radius:5, color:'#9c2743', fillColor:'#9c2743', fillOpacity:1 }).addTo(map);
+    snappedCache = buildSnappedRoute();
+    if (snappedCache.length >= 2) {
+      snapLine = L.polyline(snappedCache, { color:'#9c2743', weight:5, opacity:0.95 }).addTo(map);
+    } else if (snappedCache.length === 1) {
+      snapLine = L.circleMarker(snappedCache[0], { radius:5, color:'#9c2743', fillColor:'#9c2743', fillOpacity:1 }).addTo(map);
     }
     document.getElementById('checkBtn').disabled = rawPts.length < 2;
   }
+  function snappedRoute() { return snappedCache; }
 
   // ---------- trace input ----------
   map.on('click', e => {
@@ -302,16 +407,20 @@ function boot() {
 
   // ---------- verdict markers on ALL bridges ----------
   function drawVerdicts() {
-    clearVerdicts();
+    verdictLayer.clearLayers();
+    bridgeMarkers.forEach(m => map.removeLayer(m)); // hide neutral dots
     bridgeInfo.forEach(b => {
       const html = b.survives
         ? '<div class="verdict-badge" style="color:#16a34a;">✓</div>'
         : '<div class="verdict-badge" style="color:#dc2626;">✕</div>';
-      const icon = L.divIcon({ className:'', html, iconSize:[24,24], iconAnchor:[12,12] });
+      const icon = L.divIcon({ className:'', html, iconSize:[26,26], iconAnchor:[13,13] });
       L.marker([b.lat, b.lng], { icon, interactive:false, zIndexOffset:1000 }).addTo(verdictLayer);
     });
   }
-  function clearVerdicts() { verdictLayer.clearLayers(); }
+  function clearVerdicts() {
+    verdictLayer.clearLayers();
+    bridgeMarkers.forEach(m => { if (!map.hasLayer(m)) m.addTo(map); }); // restore neutral dots
+  }
 
   // ---------- result panel ----------
   function showResult(failed, passed, reached) {

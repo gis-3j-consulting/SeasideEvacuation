@@ -84,6 +84,13 @@
     font-size: 20px; font-weight: 900; text-shadow: 0 0 3px rgba(0,0,0,0.5);
     display: flex; align-items: center; justify-content: center;
   }
+  .bridge-fail { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .bridge-fail svg { filter: drop-shadow(0 0 2px rgba(255,255,255,0.9)); flex: none; }
+  .bridge-fail-label {
+    font-size: 11px; font-weight: 800; color: #dc2626;
+    background: rgba(255,255,255,0.9); padding: 1px 5px; border-radius: 3px;
+    text-shadow: none; line-height: 1.3;
+  }
 
   /* larger tap targets on touch devices */
   @media (pointer: coarse) {
@@ -410,11 +417,23 @@ function boot() {
     verdictLayer.clearLayers();
     bridgeMarkers.forEach(m => map.removeLayer(m)); // hide neutral dots
     bridgeInfo.forEach(b => {
-      const html = b.survives
-        ? '<div class="verdict-badge" style="color:#16a34a;">✓</div>'
-        : '<div class="verdict-badge" style="color:#dc2626;">✕</div>';
-      const icon = L.divIcon({ className:'', html, iconSize:[26,26], iconAnchor:[13,13] });
-      L.marker([b.lat, b.lng], { icon, interactive:false, zIndexOffset:1000 }).addTo(verdictLayer);
+      let html;
+      if (b.survives) {
+        html = '<div class="verdict-badge" style="color:#16a34a;">✓</div>';
+        const icon = L.divIcon({ className:'', html, iconSize:[26,26], iconAnchor:[13,13] });
+        L.marker([b.lat, b.lng], { icon, interactive:false, zIndexOffset:1000 }).addTo(verdictLayer);
+      } else {
+        // red circle-with-slash (no-entry) + "Bridge failure" label to the right
+        html = '<div class="bridge-fail">'
+             + '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">'
+             + '<circle cx="12" cy="12" r="10" fill="none" stroke="#dc2626" stroke-width="3"/>'
+             + '<line x1="5" y1="5" x2="19" y2="19" stroke="#dc2626" stroke-width="3"/>'
+             + '</svg>'
+             + '<span class="bridge-fail-label">Bridge failure</span>'
+             + '</div>';
+        const icon = L.divIcon({ className:'', html, iconSize:[24,24], iconAnchor:[12,12] });
+        L.marker([b.lat, b.lng], { icon, interactive:false, zIndexOffset:1000 }).addTo(verdictLayer);
+      }
     });
   }
   function clearVerdicts() {
@@ -433,7 +452,7 @@ function boot() {
            + ' that would be destroyed in an earthquake.</div>'
            + '<span class="close" onclick="hideResult()">✕</span></div>';
       html += '<div class="body">In a Cascadia earthquake this path would likely be impassable. '
-           + 'Look for a route that avoids the bridges marked with a red ✕, or reach the nearest evacuation area on foot along surviving roads.</div>';
+           + 'Look for a route that avoids the bridges marked with the red bridge-failure symbol, or reach the nearest evacuation area on foot along surviving roads.</div>';
     } else if (!reached) {
       html += '<div class="verdict fail"><span class="big">!</span>'
            + '<div>No failed bridges crossed — but your route didn’t reach an evacuation area.</div>'

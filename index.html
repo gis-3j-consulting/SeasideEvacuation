@@ -91,6 +91,16 @@
     background: rgba(255,255,255,0.9); padding: 1px 5px; border-radius: 3px;
     text-shadow: none; line-height: 1.3;
   }
+  .wloc { position: relative; }
+  .wloc svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+  .wloc-label {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: 100%; margin-top: 1px; white-space: nowrap;
+    font-size: 10px; font-weight: 700; color: #111827;
+    background: rgba(255,255,255,0.85); padding: 1px 4px; border-radius: 3px;
+  }
+  .wloc-start .wloc-label { color: #1e3a8a; }
+  .wloc-end .wloc-label { color: #7c4a03; }
 
   /* larger tap targets on touch devices */
   @media (pointer: coarse) {
@@ -146,7 +156,8 @@
       <div class="k"><span class="sw line" style="background:var(--cranberry);"></span> Your route (snapped to roads)</div>
       <div class="k"><span class="sw" style="background:#16a34a;opacity:0.75;"></span> Evacuation area (safe)</div>
       <div class="k"><span class="sw" style="background:#64748b;"></span> Bridge (status shown after check)</div>
-      <div class="k"><span class="sw line" style="background:#555;border-top:2px dotted #555;background:none;"></span> City limits</div>
+      <div class="k"><span class="sw" style="background:#2563eb;"></span> Start location (flag)</div>
+      <div class="k"><span class="sw" style="background:#f59e0b;"></span> End location (shelter)</div>
     </div>
     <div id="result"></div>
   </div>
@@ -185,8 +196,7 @@ function boot() {
     '<img src="' + DATA.logo + '" alt="3J Consulting">';
 
   // ---------- static layers ----------
-  // City limits — dotted outline
-  L.geoJSON(DATA.city, { style: { color:'#ffffff', weight:2, dashArray:'4 5', fill:false, opacity:0.9 } }).addTo(map);
+  // (City limits removed — Esri imagery already shows boundaries)
 
   // Roads — subtle, for snapping reference
   L.geoJSON(DATA.roads, { style: { color:'#ffd27f', weight:1, opacity:0.35 }, interactive:false }).addTo(map);
@@ -287,6 +297,31 @@ function boot() {
     bridgeMarkers.push(m);
   });
   let verdictLayer = L.layerGroup().addTo(map);
+
+  // ---------- workshop locations (reference markers: Start = flag, End = shelter) ----------
+  const FLAG_SVG =
+    '<svg viewBox="0 0 24 24" width="26" height="26">'
+    + '<line x1="6" y1="2" x2="6" y2="23" stroke="#1f2937" stroke-width="2.2" stroke-linecap="round"/>'
+    + '<path d="M6 3 L19 6 L6 11 Z" fill="#2563eb" stroke="#1e3a8a" stroke-width="1"/>'
+    + '</svg>';
+  const SHELTER_SVG =
+    '<svg viewBox="0 0 24 24" width="28" height="28">'
+    + '<path d="M12 3 L22 11 L19 11 L19 21 L5 21 L5 11 L2 11 Z" fill="#f59e0b" stroke="#7c4a03" stroke-width="1.5" stroke-linejoin="round"/>'
+    + '<rect x="10" y="14" width="4" height="7" fill="#7c4a03"/>'
+    + '</svg>';
+  DATA.workshop.features.forEach(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    const isEnd = (f.properties.Type === 'End');
+    const name = f.properties.LocationType || '';
+    const svg = isEnd ? SHELTER_SVG : FLAG_SVG;
+    const anchor = isEnd ? [14, 21] : [6, 23];
+    const html = '<div class="wloc ' + (isEnd ? 'wloc-end' : 'wloc-start') + '">'
+               + svg
+               + '<span class="wloc-label">' + name + '</span>'
+               + '</div>';
+    const icon = L.divIcon({ className:'', html, iconSize:[1,1], iconAnchor:anchor });
+    L.marker([lat, lng], { icon, interactive:false, zIndexOffset:500 }).addTo(map);
+  });
 
   // ---------- route state ----------
   let mode = 'trace';

@@ -91,8 +91,9 @@
     background: rgba(255,255,255,0.9); padding: 1px 5px; border-radius: 3px;
     text-shadow: none; line-height: 1.3;
   }
-  .wloc { position: relative; }
-  .wloc svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+  .wloc-icon { background: none; border: none; }
+  .wloc { position: relative; overflow: visible; }
+  .wloc svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); display: block; }
   .wloc-label {
     position: absolute; left: 50%; transform: translateX(-50%);
     top: 100%; margin-top: 1px; white-space: nowrap;
@@ -314,12 +315,14 @@ function boot() {
     const isEnd = (f.properties.Type === 'End');
     const name = f.properties.LocationType || '';
     const svg = isEnd ? SHELTER_SVG : FLAG_SVG;
-    const anchor = isEnd ? [14, 21] : [6, 23];
+    // icon box sized to the SVG; anchor at the base of flag pole / shelter
+    const size = isEnd ? [28, 28] : [26, 26];
+    const anchor = isEnd ? [14, 26] : [6, 25];
     const html = '<div class="wloc ' + (isEnd ? 'wloc-end' : 'wloc-start') + '">'
                + svg
                + '<span class="wloc-label">' + name + '</span>'
                + '</div>';
-    const icon = L.divIcon({ className:'', html, iconSize:[1,1], iconAnchor:anchor });
+    const icon = L.divIcon({ className:'wloc-icon', html, iconSize:size, iconAnchor:anchor });
     L.marker([lat, lng], { icon, interactive:false, zIndexOffset:500 }).addTo(map);
   });
 
